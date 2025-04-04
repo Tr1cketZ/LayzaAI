@@ -1,130 +1,148 @@
+# Importando bibliotecas básicas
 import random
 from datetime import datetime
 
+# Classe principal da IA Layza
 class Layza:
     def __init__(self, nome_aluno):
+        # Dados iniciais do aluno
         self.nome_aluno = nome_aluno
-        self.preferencias = {"matematica": 0.8, "fisica": 0.6, "portugues": 0.4}
-        self.desempenho = []
-        self.historico = []
-        self.feedbacks = []
+        self.preferencias = {"matematica": 0.8, "portugues": 0.6, "ciencias": 0.4}  # Só 3 matérias
+        self.desempenho = []  # Lista pra guardar notas
+        self.historico = []   # Guarda o que o aluno fez
+        self.feedbacks = []   # Feedbacks do aluno
 
-    def adicionar_desempenho(self, disciplina, nota):
-        self.desempenho.append({"disciplina": disciplina, "nota": nota})
-        print(f"Nota {nota} adicionada em {disciplina}.")
-
-    def analisar_perfil(self):
-        if not self.desempenho:
-            return {"preferencias": self.preferencias, "desempenho": "Sem dados"}
-        media_notas = {}
-        for registro in self.desempenho:
-            disc = registro["disciplina"]
-            nota = registro["nota"]
-            if disc in media_notas:
-                media_notas[disc] = (media_notas[disc] + nota) / 2
-            else:
-                media_notas[disc] = nota
-        return {"preferencias": self.preferencias, "desempenho": media_notas}
-
-    def recomendar_conteudo(self):
-        perfil = self.analisar_perfil()
-        disciplina = random.choice(list(self.preferencias.keys()))
-        justificativa = f"Recomendo {disciplina} pelo seu interesse ({self.preferencias[disciplina]})"
-        if disciplina in perfil["desempenho"]:
-            justificativa += f" e média {perfil['desempenho'][disciplina]:.1f}."
+    def adicionar_nota(self, disciplina, nota):
+        # Adiciona uma nota se a disciplina for válida
+        if disciplina in self.preferencias:
+            self.desempenho.append({"disciplina": disciplina, "nota": nota})
+            print(f"Nota {nota} adicionada pra {disciplina}!")
         else:
-            justificativa += " e falta de dados."
-        recomendacao = f"Explore {disciplina} com 'Introdução a {disciplina}' (Khan Academy) para refletir sobre seus pontos fortes."
-        self.historico.append(f"Recomendação: {recomendacao}")
-        return {"recomendacao": recomendacao, "justificativa": justificativa}
+            print("Erro: Disciplina errada. Use: matematica, portugues ou ciencias.")
 
-    def gerar_relatorio_mensal(self):
+    def ver_perfil(self):
+        # Mostra como o aluno tá indo
+        if len(self.desempenho) == 0:
+            return {"preferencias": self.preferencias, "desempenho": "Sem notas ainda"}
+        medias = {}
+        for item in self.desempenho:
+            disc = item["disciplina"]
+            nota = item["nota"]
+            if disc in medias:
+                medias[disc] = (medias[disc] + nota) / 2  # Média simples
+            else:
+                medias[disc] = nota
+        return {"preferencias": self.preferencias, "desempenho": medias}
+
+    def dar_dica(self):
+        # Dá uma dica de estudo baseada no perfil
+        perfil = self.ver_perfil()
+        disciplina = random.choice(list(self.preferencias.keys()))
+        motivo = f"Escolhi {disciplina} porque você parece gostar ({self.preferencias[disciplina]})"
+        if disciplina in perfil["desempenho"]:
+            motivo += f" e sua média é {perfil['desempenho'][disciplina]}."
+        else:
+            motivo += " e ainda não tem nota."
+        dica = f"Tenta estudar {disciplina} com o vídeo 'Introdução a {disciplina}' no Khan Academy. O que você acha disso?"
+        self.historico.append(f"Dica: {dica}")
+        return {"dica": dica, "motivo": motivo}
+
+    def fazer_relatorio(self):
+        # Mostra as últimas 5 coisas que o aluno fez
         if not self.historico:
-            return "Nenhuma interação registrada."
-        limite = min(5, len(self.historico))
-        relatorio = f"Relatório para {self.nome_aluno} ({datetime.now().strftime('%d/%m/%Y')}):\n"
-        for i, item in enumerate(self.historico[-limite:], 1):
-            relatorio += f"{i}. {item}\n"
+            return "Nada aconteceu ainda."
+        limite = 5 if len(self.historico) >= 5 else len(self.historico)
+        relatorio = f"Relatório do {self.nome_aluno} ({datetime.now().strftime('%d/%m/%Y')}):\n"
+        for i, coisa in enumerate(self.historico[-limite:], 1):
+            relatorio += f"{i}. {coisa}\n"
         return relatorio
 
-    def gerar_quiz(self, disciplina):
+    def criar_quiz(self, disciplina):
+        # Cria um quiz pra fazer o aluno pensar
+        if disciplina not in self.preferencias:
+            return "Ops! Só temos matematica, portugues e ciencias. Escolha uma dessas!"
         quiz = [
-            f"1. O que você entende por {disciplina}? Tente explicar com suas palavras.",
-            f"2. Como {disciplina} se aplica no dia a dia? Pense em um exemplo.",
-            f"3. Qual é um conceito básico de {disciplina} que você já conhece?",
-            f"4. Por que estudar {disciplina} é importante para você?",
-            f"5. Crie uma pergunta sobre {disciplina} e tente respondê-la sozinho."
+            f"1. O que é {disciplina} pra você? Explica com suas palavras.",
+            f"2. Onde você usa {disciplina} no dia a dia? Dá um exemplo.",
+            f"3. Qual ideia básica de {disciplina} você já sabe?",
+            f"4. Por que acha que {disciplina} importa?",
+            f"5. Faz uma pergunta sobre {disciplina} e tenta responder sozinho."
         ]
-        self.historico.append(f"Quiz gerado para {disciplina}")
+        self.historico.append(f"Quiz criado pra {disciplina}")
         return "\n".join(quiz)
 
-    def receber_feedback(self, gostei, mensagem=""):
-        feedback = {"data": datetime.now(), "gostei": gostei, "mensagem": mensagem}
+    def guardar_feedback(self, gostei, comentario=""):
+        # Salva o que o aluno achou
+        feedback = {"data": datetime.now(), "gostei": gostei, "comentario": comentario}
         self.feedbacks.append(feedback)
-        return "Feedback registrado!"
+        return "Valeu pelo feedback!"
 
-    def responder_pergunta(self, pergunta):
-        """Responde perguntas guiando o aluno, sem dar a resposta direta."""
-        disciplina = next((d for d in self.preferencias.keys() if d in pergunta.lower()), "geral")
-        resposta = f"Boa pergunta! Para refletir sobre '{pergunta}', pense: qual é o conceito principal envolvido? O que você já sabe sobre {disciplina} que pode ajudar? Tente dividir a questão em partes menores e me diga o que você acha!"
-        self.historico.append(f"Pergunta: {pergunta} - Resposta guiada fornecida")
-        return resposta
+    def ajudar_com_pergunta(self, pergunta):
+        # Ajuda o aluno a pensar na resposta
+        disciplina = "geral"
+        for d in self.preferencias:
+            if d in pergunta.lower():
+                disciplina = d
+                break
+        ajuda = f"Ei, boa pergunta: '{pergunta}'! Vamos pensar juntos: qual é a ideia principal disso? O que você já sabe sobre {disciplina}? Tenta quebrar em pedaços menores e me conta!"
+        self.historico.append(f"Pergunta: {pergunta} - Ajuda dada")
+        return ajuda
 
-    def analisar_prova(self, texto_prova):
-        """Simula análise de uma prova (texto por enquanto), sugerindo melhorias."""
-        # Simulação: suponha que o texto contém uma pergunta e uma resposta do aluno
+    def corrigir_prova(self, texto_prova):
+        # Corrige uma prova sem dar a resposta
         linhas = texto_prova.split("\n")
         if len(linhas) < 2:
-            return "Por favor, forneça uma pergunta e sua resposta para análise."
+            return "Falta algo! Digita a pergunta e sua resposta, uma por linha."
         
         pergunta = linhas[0].strip()
-        resposta_aluno = linhas[1].strip()
+        resposta = linhas[1].strip()
         
-        # Lógica simples para "analisar" (futuramente usaria OCR e regras mais complexas)
-        feedback = f"Análise da sua prova:\nPergunta: {pergunta}\nSua resposta: {resposta_aluno}\n"
-        if len(resposta_aluno) < 10:  # Exemplo de critério simples
-            feedback += "Parece que sua resposta está muito curta. Tente explicar mais: quais passos você seguiu para chegar a essa conclusão? Que conceitos estão envolvidos?"
+        correcao = f"Olha sua prova:\nPergunta: {pergunta}\nSua resposta: {resposta}\n"
+        if len(resposta) < 10:
+            correcao += "Tá meio curto. Como você chegou nisso? Tenta explicar mais o que pensou!"
         else:
-            feedback += "Sua resposta tem um bom tamanho! Reflita: você cobriu todos os pontos da pergunta? Que tal verificar se usou exemplos ou detalhes específicos para reforçar sua ideia?"
-        feedback += "\nDica: Revisite o material de apoio ou me pergunte algo específico para melhorar!"
+            correcao += "Certo, o texto está bom do ponto de vista legal! Será que ele aborda todos os aspectos solicitados na questão? Talvez valha a pena considerar a inclusão de um exemplo prático para ilustrar melhor."
+        correcao += "\nDica: Analise seus documentos ou me questione para otimizar ainda mais.!"
         
-        self.historico.append(f"Análise de prova: {pergunta}")
-        return feedback
+        self.historico.append(f"Corrigi prova: {pergunta}")
+        return correcao
 
-    def executar(self):
-        print(f"Olá, {self.nome_aluno}! Sou a Layza, sua assistente de estudos. Eu não dou respostas prontas, mas te ajudo a encontrar o caminho!")
+    def menu(self):
+        # Menu simples pra interagir
+        print(f"Oi, {self.nome_aluno}! Sou Layza, tua companheira de estudos. Não te dou respostas prontas, mas caminho contigo na busca pelas tuas próprias descobertas.!")
         while True:
-            print("\n1) Recomendações  2) Relatório  3) Quiz  4) Feedback  5) Adicionar nota  6) Fazer pergunta  7) Analisar prova  8) Sair")
-            opcao = input("Escolha: ")
-            if opcao == "1":
-                resultado = self.recomendar_conteudo()
-                print(f"Recomendação: {resultado['recomendacao']}")
-                print(f"Justificativa: {resultado['justificativa']}")
-            elif opcao == "2":
-                print(self.gerar_relatorio_mensal())
-            elif opcao == "3":
-                disciplina = input("Disciplina (ex: matematica, fisica, portugues): ")
-                print(self.gerar_quiz(disciplina))
-            elif opcao == "4":
-                gostei = input("Gostei (s/n)? ").lower() == "s"
-                mensagem = input("Comentário (opcional): ")
-                print(self.receber_feedback(gostei, mensagem))
-            elif opcao == "5":
-                disciplina = input("Disciplina: ")
-                nota = float(input("Nota (0-100): "))
-                self.adicionar_desempenho(disciplina, nota)
-            elif opcao == "6":
-                pergunta = input("Qual é a sua pergunta? ")
-                print(self.responder_pergunta(pergunta))
-            elif opcao == "7":
-                texto_prova = input("Digite a pergunta da prova e sua resposta (uma por linha):\n")
-                print(self.analisar_prova(texto_prova))
-            elif opcao == "8":
-                print("Até logo!")
+            print("\n1) Dica de estudo  2) Relatório  3) Quiz  4) Feedback  5) Adicionar nota  6) Perguntar  7) Corrigir prova  8) Sair")
+            escolha = input("O que você quer fazer? ")
+            if escolha == "1":
+                resultado = self.dar_dica()
+                print(f"Dica: {resultado['dica']}")
+                print(f"Por que: {resultado['motivo']}")
+            elif escolha == "2":
+                print(self.fazer_relatorio())
+            elif escolha == "3":
+                disciplina = input("Qual matéria? (matematica, portugues, ciencias): ")
+                print(self.criar_quiz(disciplina))
+            elif escolha == "4":
+                gostei = input("Gostou? (s/n): ").lower() == "s"
+                comentario = input("Deixa um comentário (se quiser): ")
+                print(self.guardar_feedback(gostei, comentario))
+            elif escolha == "5":
+                disciplina = input("Qual matéria? (matematica, portugues, ciencias): ")
+                nota = float(input("Qual a nota (0-100)? "))
+                self.adicionar_nota(disciplina, nota)
+            elif escolha == "6":
+                pergunta = input("Qual sua dúvida? ")
+                print(self.ajudar_com_pergunta(pergunta))
+            elif escolha == "7":
+                texto_prova = input("Digite a pergunta e sua resposta (uma por linha):\n")
+                print(self.corrigir_prova(texto_prova))
+            elif escolha == "8":
+                print("Tchau! Até a próxima!")
                 break
             else:
-                print("Opção inválida.")
+                print("Escolha errada, tenta de novo!")
 
+# Testando a IA
 if __name__ == "__main__":
-    ia = Layza("Maria")
-    ia.executar()
+    aluno = Layza("João")
+    aluno.menu()
