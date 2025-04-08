@@ -1,202 +1,126 @@
-# Importando bibliotecas básicas
-import random
-from datetime import datetime
+# Pegando a biblioteca da OpenAI pra fazer a mágica acontecer
+from openai import OpenAI
 
-# Classe principal da IA Layza
 class Layza:
-    def __init__(self, nome_aluno):
-        # Dados iniciais do aluno
+    def __init__(self, nome_aluno, api_key):
+        """
+        Oi! Eu sou a Layza, sua ajudante pra estudar. Aqui eu guardo seu nome e a chave pra falar com a OpenAI.
+        
+        Args:
+            nome_aluno (str): Seu nome, pra eu te chamar direitinho!
+            api_key (str): A chave secreta pra usar a OpenAI.
+        """
         self.nome_aluno = nome_aluno
-        self.preferencias = {"matematica": 0.8, "portugues": 0.6, "ciencias": 0.4}  # Só 3 matérias
-        self.desempenho = []  # Lista pra guardar notas
-        self.historico = []   # Guarda o que o aluno fez
-        self.feedbacks = []   # Feedbacks do aluno
+        self.materias = ["matematica", "portugues", "ciencias"]  # Só essas três pra gente focar
+        self.client = OpenAI(api_key=api_key)  # Minha conexão com a OpenAI, tipo um telefone especial
 
-        # Dados das matérias pra ajudar nas funções
-        self.dados_materias = {
-            "matematica": {
-                "conceitos": ["equações", "geometria", "frações"],
-                "perguntas": [
-                    "O que uma equação precisa pra ser resolvida?",
-                    "Como você calcula a área de algo?",
-                    "O que significa uma fração na prática?"
-                ],
-                "dicas": [
-                    "Tenta olhar o vídeo 'Básico de Matemática' no Khan Academy.",
-                    "Pega um caderno e faz uns cálculos simples pra praticar!",
-                    "Já pensou em usar exemplos do dia a dia pra entender melhor?"
-                ]
-            },
-            "portugues": {
-                "conceitos": ["substantivos", "verbos", "pontuação"],
-                "perguntas": [
-                    "O que é um substantivo? Dá um exemplo!",
-                    "Como você sabe qual tempo um verbo tá?",
-                    "Por que a vírgula muda uma frase?"
-                ],
-                "dicas": [
-                    "Leia um texto curto e tenta achar os substantivos.",
-                    "Escreve uma frase e vê onde a pontuação ajuda.",
-                    "Assiste 'Gramática Básica' no YouTube pra revisar!"
-                ]
-            },
-            "ciencias": {
-                "conceitos": ["energia", "vida", "matéria"],
-                "perguntas": [
-                    "O que faz algo ser vivo ou não?",
-                    "Como a energia muda de um tipo pra outro?",
-                    "O que é matéria pra você?"
-                ],
-                "dicas": [
-                    "Olha o vídeo 'Ciências pra Crianças' no Khan Academy.",
-                    "Pensa num exemplo de energia que você usa todo dia.",
-                    "Tenta descrever algo que você vê como matéria!"
-                ]
-            }
-        }
+    def _detectar_disciplina(self, texto):
+        """
+        Tento adivinhar qual matéria você tá falando só olhando pro texto.
+        
+        Args:
+            texto (str): O que você escreveu pra mim.
+        
+        Returns:
+            str: A matéria que achei ou 'geral' se não tiver nenhuma.
+        """
+        for materia in self.materias:
+            if materia in texto.lower():
+                return materia
+        return "geral"  # Se não achar, fico no genérico
 
-    def adicionar_nota(self, disciplina, nota):
-        # Adiciona uma nota se a disciplina for válida
-        if disciplina in self.preferencias:
-            self.desempenho.append({"disciplina": disciplina, "nota": nota})
-            print(f"Nota {nota} adicionada pra {disciplina}!")
-        else:
-            print("Erro: Disciplina errada. Use: matematica, portugues ou ciencias.")
-
-    def ver_perfil(self):
-        # Mostra como o aluno tá indo
-        if len(self.desempenho) == 0:
-            return {"preferencias": self.preferencias, "desempenho": "Sem notas ainda"}
-        medias = {}
-        for item in self.desempenho:
-            disc = item["disciplina"]
-            nota = item["nota"]
-            if disc in medias:
-                medias[disc] = (medias[disc] + nota) / 2  # Média simples
-            else:
-                medias[disc] = nota
-        return {"preferencias": self.preferencias, "desempenho": medias}
-
-    def dar_dica(self):
-        # Dá uma dica de estudo baseada no perfil e nos dados
-        perfil = self.ver_perfil()
-        disciplina = random.choice(list(self.preferencias.keys()))
-        motivo = f"Escolhi {disciplina} porque você parece gostar ({self.preferencias[disciplina]})"
-        if disciplina in perfil["desempenho"]:
-            motivo += f" e sua média é {perfil['desempenho'][disciplina]}."
-        else:
-            motivo += " e ainda não tem nota."
-        dica = random.choice(self.dados_materias[disciplina]["dicas"])
-        self.historico.append(f"Dica: {dica}")
-        return {"dica": dica, "motivo": motivo}
-
-    def fazer_relatorio(self):
-        # Mostra as últimas 5 coisas que o aluno fez
-        if not self.historico:
-            return "Nada aconteceu ainda."
-        limite = 5 if len(self.historico) >= 5 else len(self.historico)
-        relatorio = f"Relatório do {self.nome_aluno} ({datetime.now().strftime('%d/%m/%Y')}):\n"
-        for i, coisa in enumerate(self.historico[-limite:], 1):
-            relatorio += f"{i}. {coisa}\n"
-        return relatorio
-
-    def criar_quiz(self, disciplina):
-        # Cria um quiz com perguntas dos dados
-        if disciplina not in self.preferencias:
-            return "Ops! Só temos matematica, portugues e ciencias. Escolha uma dessas!"
-        perguntas = random.sample(self.dados_materias[disciplina]["perguntas"], 3)  # Pega 3 perguntas aleatórias
-        quiz = [
-            f"1. {perguntas[0]}",
-            f"2. {perguntas[1]}",
-            f"3. {perguntas[2]}",
-            "4. Tenta criar uma pergunta sua sobre isso!",
-            "5. O que você achou mais difícil até agora?"
-        ]
-        self.historico.append(f"Quiz criado pra {disciplina}")
-        return "\n".join(quiz)
-
-    def guardar_feedback(self, gostei, comentario=""):
-        # Salva o que o aluno achou
-        feedback = {"data": datetime.now(), "gostei": gostei, "comentario": comentario}
-        self.feedbacks.append(feedback)
-        return "Valeu pelo feedback!"
+    def _extrair_chave(self, texto):
+        """
+        Pego a última palavra do que você disse pra focar em algo legal.
+        
+        Args:
+            texto (str): O texto que você me deu.
+        
+        Returns:
+            str: A palavra-chave ou 'esse assunto' se não tiver nada.
+        """
+        palavras = texto.lower().split()
+        return palavras[-1] if palavras else "esse assunto"  # Última palavra ou um plano B
 
     def ajudar_com_pergunta(self, pergunta):
-        # Ajuda o aluno a pensar na resposta usando os dados
-        disciplina = "geral"
-        for d in self.preferencias:
-            if d in pergunta.lower():
-                disciplina = d
-                break
-        if disciplina != "geral":
-            conceito = random.choice(self.dados_materias[disciplina]["conceitos"])
-            ajuda = f"Ei, sobre '{pergunta}'! Vamos pensar: o que você sabe sobre {conceito} em {disciplina}? Como isso se liga à sua dúvida? Me conta mais!"
-        else:
-            ajuda = f"Boa pergunta: '{pergunta}'! Vamos pensar juntos: qual é a ideia principal disso? Tenta quebrar em pedaços menores e me conta o que você acha!"
-        self.historico.append(f"Pergunta: {pergunta} - Ajuda dada")
-        return ajuda
+        """
+        Te ajudo com sua dúvida de um jeito que faz você pensar bastante!
+        
+        Args:
+            pergunta (str): O que você quer saber.
+        
+        Returns:
+            str: Minha resposta pra te guiar, tipo uma conversa de amigo.
+        """
+        if not pergunta:
+            return f"Ei, {self.nome_aluno}, você esqueceu de perguntar! O que tá passando pela sua cabeça?"
 
-    def corrigir_prova(self, texto_prova):
-        # Corrige uma prova sem dar a resposta
-        linhas = texto_prova.split("\n")
-        if len(linhas) < 2:
-            return "Falta algo! Digita a pergunta e sua resposta, uma por linha."
-        
-        pergunta = linhas[0].strip()
-        resposta = linhas[1].strip()
-        
-        disciplina = "geral"
-        for d in self.preferencias:
-            if d in pergunta.lower():
-                disciplina = d
-                break
-        
-        correcao = f"Olha sua prova:\nPergunta: {pergunta}\nSua resposta: {resposta}\n"
-        if len(resposta) < 10:
-            correcao += f"Tá meio curto. Como você chegou nisso? Tenta explicar mais sobre {random.choice(self.dados_materias.get(disciplina, {'conceitos': ['o tema']})['conceitos'])}!"
-        else:
-            correcao += "Legal, tá bem escrito! Será que cobriu tudo que a pergunta pede? Pensa se dá pra adicionar algo que você sabe!"
-        correcao += "\nDica: Dá uma revisada no material ou me pergunta mais!"
-        
-        self.historico.append(f"Corrigi prova: {pergunta}")
-        return correcao
+        disciplina = self._detectar_disciplina(pergunta)
+        chave = self._extrair_chave(pergunta)
 
-    def menu(self):
-        # Menu simples pra interagir
-        print(f"Oi, {self.nome_aluno}! Eu sou a Layza, sua ajudante de estudos. Não te dou respostas prontas, mas te guio pra encontrar elas!")
-        while True:
-            print("\n1) Dica de estudo  2) Relatório  3) Quiz  4) Feedback  5) Adicionar nota  6) Perguntar  7) Corrigir prova  8) Sair")
-            escolha = input("O que você quer fazer? ")
-            if escolha == "1":
-                resultado = self.dar_dica()
-                print(f"Dica: {resultado['dica']}")
-                print(f"Por que: {resultado['motivo']}")
-            elif escolha == "2":
-                print(self.fazer_relatorio())
-            elif escolha == "3":
-                disciplina = input("Qual matéria? (matematica, portugues, ciencias): ")
-                print(self.criar_quiz(disciplina))
-            elif escolha == "4":
-                gostei = input("Gostou? (s/n): ").lower() == "s"
-                comentario = input("Deixa um comentário (se quiser): ")
-                print(self.guardar_feedback(gostei, comentario))
-            elif escolha == "5":
-                disciplina = input("Qual matéria? (matematica, portugues, ciencias): ")
-                nota = float(input("Qual a nota (0-100)? "))
-                self.adicionar_nota(disciplina, nota)
-            elif escolha == "6":
-                pergunta = input("Qual sua dúvida? ")
-                print(self.ajudar_com_pergunta(pergunta))
-            elif escolha == "7":
-                texto_prova = input("Digite a pergunta e sua resposta (uma por linha):\n")
-                print(self.corrigir_prova(texto_prova))
-            elif escolha == "8":
-                print("Tchau! Até a próxima!")
-                break
-            else:
-                print("Escolha errada, tenta de novo!")
+        # Conversinha que mando pra OpenAI pra ela me ajudar a te ajudar
+        prompt = (
+            f"Eu sou a Layza, uma amiga educacional que só fala de {', '.join(self.materias)}. "
+            f"Quero usar o método socrático: nada de respostas prontas, só perguntas legais pra fazer o aluno pensar. "
+            f"A pergunta dele é: '{pergunta}'. "
+            f"Quero que você foque na palavra '{chave}' e na matéria '{disciplina}' (se for 'geral', se vira). "
+            f"Fala comigo em português, bem simples e como se fosse pro aluno '{self.nome_aluno}'!"
+        )
 
-# Testando a IA
+        # Peço pra OpenAI me dar uma mãozinha
+        resposta = self.client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=150,
+            temperature=0.7  # Pra ficar descontraído, mas não viajar demais
+        ).choices[0].message.content
+
+        return f"Ei, {self.nome_aluno}, sobre '{pergunta}'! {resposta}"
+
+    def corrigir_prova(self, pergunta, resposta_aluno):
+        """
+        Dou uma olhada na sua prova e te faço pensar no que você escreveu.
+        
+        Args:
+            pergunta (str): A questão da prova.
+            resposta_aluno (str): O que você respondeu.
+        
+        Returns:
+            str: Um papo pra te ajudar a melhorar, sem dar a resposta pronta.
+        """
+        if not pergunta or not resposta_aluno:
+            return f"Opa, {self.nome_aluno}, tá faltando algo! Me dá a pergunta e sua resposta direitinho, vai!"
+
+        disciplina = self._detectar_disciplina(pergunta)
+        chave = self._extrair_chave(pergunta)
+
+        # Meu pedido pra OpenAI me ajudar a te guiar
+        prompt = (
+            f"Eu sou a Layza, sua ajudante pra {', '.join(self.materias)}. "
+            f"Quero usar o método socrático: não corrige nada direto, só faz perguntas pra o aluno repensar. "
+            f"A pergunta da prova é: '{pergunta}'. Ele respondeu: '{resposta_aluno}'. "
+            f"Foca na palavra '{chave}' e na matéria '{disciplina}' (se for 'geral', adapta). "
+            f"Fala em português, bem tranquilo e pro aluno '{self.nome_aluno}'!"
+        )
+
+        # Chamo a OpenAI pra gente bater um papo
+        resposta = self.client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+            temperature=0.7
+        ).choices[0].message.content
+
+        return f"Veja sua prova, {self.nome_aluno}:\nPergunta: {pergunta}\nSua resposta: {resposta_aluno}\n{resposta}"
+
+# Testando pra ver se eu funciono direitinho
 if __name__ == "__main__":
-    aluno = Layza("João")
-    aluno.menu()
+    # Coloque sua chave da OpenAI aqui pra eu funcionar
+    api_key = "sua-chave-openai-aqui"
+    layza = Layza("João", api_key)
+
+    # Testando uma dúvida
+    print(layza.ajudar_com_pergunta("O que é um verbo em português?"))
+
+    # Testando uma correção de prova
+    print(layza.corrigir_prova("Qual é a área de um quadrado?", "Lado vezes lado"))
