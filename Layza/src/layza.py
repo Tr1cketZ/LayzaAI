@@ -3,13 +3,14 @@ import json
 import re
 from typing import Dict, List, Optional
 from datetime import datetime
+from decouple import config
 
 class Layza:
     def __init__(self, nome_aluno: str, materia: str, nivel_escolar: str, token: Optional[str] = None):
         self.nome_aluno = nome_aluno
         self.materia = materia.lower()
         self.nivel_escolar = nivel_escolar.lower()
-        self.api_key = "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"
+        self.api_key = config("API_KEY")
         self.url = "https://openrouter.ai/api/v1/chat/completions"
         self.content_api = "http://mock-api.layza.com/contents"  # API de conteúdos (mock)
         self.progress_api = "http://mock-api.layza.com/progress"  # API de progresso (mock)
