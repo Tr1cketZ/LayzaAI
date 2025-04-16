@@ -3,7 +3,8 @@ import json
 import re
 import logging
 import os
-from typing import Dict, List, Optional
+import sqlite3
+from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from dotenv import load_dotenv
 from unidecode import unidecode
@@ -14,56 +15,183 @@ logging.basicConfig(filename="layza.log", level=logging.INFO, format="%(asctime)
 # Carregar variáveis de ambiente
 load_dotenv()
 
-class Layza:
-    def __init__(self, nome_aluno: str, materia: str, nivel_escolar: str, token: Optional[str] = None):
+class APIClient:
+    def __init__(self, api_key: str, nome_aluno: str):
+        self.api_key = api_key
         self.nome_aluno = nome_aluno
-        self.materia = materia.lower()
-        self.nivel_escolar = nivel_escolar.lower()
-        self.api_key = os.getenv("OPENROUTER_API_KEY")
-        if not self.api_key:
-            msg = "Erro: Chave OPENROUTER_API_KEY não encontrada no .env!"
-            logging.error(msg)
-            raise ValueError(msg)
         self.url = "https://openrouter.ai/api/v1/chat/completions"
-        self.content_api = "http://mock-api.layza.com/contents"
-        self.progress_api = "http://mock-api.layza.com/progress"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://layza-educacional.com",
             "X-Title": "Layza Educacional",
         }
-        self.token = token
-        self.user_data = self._validate_token() if token else {"role": "aluno", "preferences": {}}
         self.cache = {}
-        self.historico_file = f"historico_{self.materia}.json"
-        self.historico = self._carregar_historico()
-        logging.info(f"Inicializado Layza para {nome_aluno}, matéria {materia}")
 
-    def _carregar_historico(self) -> List:
-        """Carrega o histórico da matéria do arquivo JSON."""
+    def chamar(self, prompt: str, max_tokens: int = 1000) -> str:
+        """Chama API OpenRouter com cache e tratamento de erros."""
+        logging.info(f"Chamando API para prompt: {prompt[:50]}...")
+        if prompt in self.cache:
+            logging.info("Resposta obtida do cache")
+            return self.cache[prompt]
+        
         try:
-            if os.path.exists(self.historico_file):
-                with open(self.historico_file, 'r', encoding='utf-8') as f:
-                    historico = json.load(f)
-                    logging.info(f"Histórico carregado de {self.historico_file}")
-                    return historico
-            return []
-        except (json.JSONDecodeError, IOError) as e:
+            dados = {
+                "model": "deepseek/deepseek-chat",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "temperature": 0.7,
+            }
+            response = requests.post(self.url, headers=self.headers, json=dados, timeout=10)
+            response.raise_for_status()
+            texto = response.json()["choices"][0]["message"]["content"]
+            self.cache[prompt] = texto
+            logging.info("Resposta recebida da API")
+            return texto
+        except requests.HTTPError as e:
+            msg = f"Eita, {self.nome_aluno}, erro na API ({e.response.status_code})! Tenta outra pergunta?"
+            logging.error(f"HTTPError: {str(e)}")
+            return msg
+        except (requests.Timeout, requests.ConnectionError) as e:
+            msg = f"Eita, {self.nome_aluno}, a API tá fora do ar! Tenta de novo depois?"
+            logging.error(f"NetworkError: {str(e)}")
+            return msg
+        except (KeyError, IndexError) as e:
+            msg = f"Eita, {self.nome_aluno}, a API mandou algo errado! Tenta outra pergunta?"
+            logging.error(f"APIError: {str(e)}")
+            return msg
+
+class HistoricoManager:
+    def __init__(self, materia: str):
+        self.db_file = f"historico_{materia}.db"
+        self._init_db()
+
+    def _init_db(self):
+        """Inicializa o banco SQLite para o histórico."""
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS historico (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    aluno TEXT,
+                    pergunta TEXT,
+                    resposta TEXT,
+                    timestamp TEXT
+                )
+            """)
+            conn.commit()
+        except sqlite3.Error as e:
+            logging.error(f"Erro ao inicializar DB: {str(e)}")
+        finally:
+            conn.close()
+
+    def carregar(self, aluno: str, limit: int = 2) -> List[Tuple[str, str]]:
+        """Carrega as últimas interações do aluno."""
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT pergunta, resposta FROM historico WHERE aluno = ? ORDER BY timestamp DESC LIMIT ?",
+                (aluno, limit)
+            )
+            historico = cursor.fetchall()
+            logging.info(f"Histórico carregado para {aluno}")
+            return historico
+        except sqlite3.Error as e:
             logging.error(f"Erro ao carregar histórico: {str(e)}")
             return []
+        finally:
+            conn.close()
 
-    def _salvar_historico(self):
-        """Salva o histórico da matéria no arquivo JSON."""
+    def salvar(self, aluno: str, pergunta: str, resposta: str):
+        """Salva uma interação no histórico."""
         try:
-            with open(self.historico_file, 'w', encoding='utf-8') as f:
-                json.dump(self.historico, f, ensure_ascii=False, indent=2)
-            logging.info(f"Histórico salvo em {self.historico_file}")
-        except IOError as e:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO historico (aluno, pergunta, resposta, timestamp) VALUES (?, ?, ?, ?)",
+                (aluno, pergunta, resposta, datetime.now().isoformat())
+            )
+            conn.commit()
+            logging.info(f"Histórico salvo para {aluno}")
+        except sqlite3.Error as e:
             logging.error(f"Erro ao salvar histórico: {str(e)}")
+        finally:
+            conn.close()
+
+class PromptBuilder:
+    def __init__(self, materia: str, nivel_escolar: str):
+        self.materia = materia
+        self.nivel_escolar = nivel_escolar
+        self.exemplos = {
+            "matematica": "ex.: potência em cálculos de juros, área de figuras, progressões",
+            "portugues": "ex.: análise de textos, gramática em redações, figuras de linguagem",
+            "ciencias": "ex.: reações químicas, energia, ecossistemas"
+        }
+
+    def para_pergunta(self, pergunta: str, chave: str, historico: str, pref: str) -> str:
+        return (
+            f"Sou a Layza, de {self.materia}, para {self.nivel_escolar}, ajudando adolescentes do ensino médio pro ENEM. "
+            f"Use método socrático: faça 1-2 perguntas reflexivas, curtas, só de {self.materia}. "
+            f"Exemplos: {self.exemplos[self.materia]}. Sem outras matérias. "
+            f"Preferências: {pref}. Histórico:\n{historico}\nPergunta: '{pergunta}'. "
+            f"Foco: '{chave}'. Fala como colega pro ENEM."
+        )
+
+    def para_feedback(self, pergunta: str, reflexoes: str, resposta: str, chave: str) -> str:
+        return (
+            f"Sou a Layza, de {self.materia}, para {self.nivel_escolar}, ajudando adolescentes do ensino médio pro ENEM. "
+            f"Analisa a resposta do aluno: dá feedback curto e direto, vê se tá no caminho certo, faz uma pergunta pra avançar. "
+            f"Se confuso, explica {self.materia} com exemplo prático ({self.exemplos[self.materia]}), sem outras matérias. "
+            f"Pergunta: '{pergunta}'. Reflexões: '{reflexoes}'. Resposta: '{resposta}'. "
+            f"Foca em '{chave}'. Fala como colega pro ENEM."
+        )
+
+    def para_explicacao_simples(self, pergunta: str, resposta: str, chave: str) -> str:
+        return (
+            f"Sou a Layza, de {self.materia}, para {self.nivel_escolar}, ajudando adolescentes do ensino médio pro ENEM. "
+            f"O aluno tá confuso com '{pergunta}'. Explica de forma bem simples, com exemplo prático de {self.materia} "
+            f"({self.exemplos[self.materia]}), sem mencionar outras matérias. "
+            f"Histórico: '{resposta}'. Foca em '{chave}'. Fala direto, como um colega pro ENEM."
+        )
+
+    def para_explicacao_tecnica(self, pergunta: str, resposta: str, chave: str) -> str:
+        return (
+            f"Sou a Layza, de {self.materia}, para {self.nivel_escolar}, ajudando adolescentes do ensino médio pro ENEM. "
+            f"O aluno quer uma explicação técnica sobre '{pergunta}'. Explica com detalhes, usando conceitos avançados de {self.materia} "
+            f"({self.exemplos[self.materia]}), sem mencionar outras matérias. Inclui fórmulas ou processos, se aplicável. "
+            f"Histórico: '{resposta}'. Foca em '{chave}'. Fala claro, como um colega pro ENEM."
+        )
+
+class Layza:
+    def __init__(self, nome_aluno: str, materia: str, nivel_escolar: str, token: Optional[str] = None):
+        self.nome_aluno = nome_aluno
+        self.materia = materia.lower()
+        self.nivel_escolar = nivel_escolar.lower()
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
+            msg = "Erro: Chave OPENROUTER_API_KEY não encontrada no .env!"
+            logging.error(msg)
+            raise ValueError(msg)
+        self.api_client = APIClient(api_key, nome_aluno)
+        self.historico_manager = HistoricoManager(self.materia)
+        self.prompt_builder = PromptBuilder(self.materia, self.nivel_escolar)
+        self.content_api = "http://mock-api.layza.com/contents"
+        self.progress_api = "http://mock-api.layza.com/progress"
+        self.token = token
+        self.user_data = self._validate_token() if token else {"role": "aluno", "preferences": {}}
+        logging.info(f"Inicializado Layza para {nome_aluno}, matéria {materia}")
+
+    def _validar_entrada(self, texto: str, max_len: int = 500) -> Optional[str]:
+        """Sanitiza e valida entrada do usuário."""
+        if not texto or len(texto.strip()) < 3:
+            return None
+        texto = re.sub(r'[^\w\s?!.,]', '', texto.strip())[:max_len]
+        return texto if len(texto) >= 3 else None
 
     def _validate_token(self) -> Dict:
-        """Valida JWT via API simulada (RF05, RF13)."""
+        """Valida JWT via API simulada."""
         logging.info(f"Validando token para {self.nome_aluno}")
         try:
             response = requests.get(
@@ -71,17 +199,13 @@ class Layza:
                 headers={"Authorization": f"Bearer {self.token}"},
                 timeout=1,
             )
-            if response.status_code == 200:
-                data = response.json()
-                result = {
-                    "role": data.get("role", "aluno"),
-                    "preferences": data.get("preferences", {"visual": False, "auditivo": False, "leitura": False}),
-                    **{k: v for k, v in data.items() if k not in ["role", "preferences"]}
-                }
-                logging.info(f"Token validado: {result}")
-                return result
-            logging.warning(f"Token inválido para {self.nome_aluno}, usando padrão")
-            return {"role": "aluno", "preferences": {}}
+            response.raise_for_status()
+            data = response.json()
+            return {
+                "role": data.get("role", "aluno"),
+                "preferences": data.get("preferences", {"visual": False, "auditivo": False, "leitura": False}),
+                **{k: v for k, v in data.items() if k not in ["role", "preferences"]}
+            }
         except requests.RequestException as e:
             msg = f"Eita, {self.nome_aluno}, problema no token! Usando modo aluno."
             print(msg)
@@ -89,7 +213,7 @@ class Layza:
             return {"role": "aluno", "preferences": {}}
 
     def _detectar_materia(self, texto: str) -> Optional[str]:
-        """Detecta matéria com base no texto (RF19)."""
+        """Detecta matéria com base no texto."""
         texto = unidecode(texto.lower())
         if any(word in texto for word in ["portugues", "verbo", "substantivo", "frase"]):
             return "portugues"
@@ -100,87 +224,40 @@ class Layza:
         return None
 
     def _extrair_chave(self, texto: str) -> str:
-        """Extrai palavra-chave relevante da pergunta."""
+        """Extrai palavra-chave relevante."""
         stopwords = {"o", "que", "é", "a", "um", "uma", "de", "em", "para", "com", "no", "na", "quanto"}
         texto = re.sub(r'[^\w\s]', '', texto.lower())
         palavras = [p for p in texto.split() if p not in stopwords and len(p) > 2]
         return palavras[-1] if palavras else self.materia
 
+    def _resposta_local_matematica(self, pergunta: str) -> Optional[str]:
+        """Resposta local para perguntas matemáticas simples."""
+        match = re.match(r"quanto é (\d+) elevado a (\d+)", pergunta.lower())
+        if match:
+            base, expoente = map(int, match.groups())
+            return f"{base} elevado a {expoente} é {base ** expoente}."
+        return None
+
     def _get_user_preferences(self) -> Dict:
-        """Retorna preferências do usuário (RF15-RF17)."""
+        """Retorna preferências do usuário."""
         return self.user_data.get("preferences", {"visual": False, "auditivo": False, "leitura": False})
 
-    def _chamar_deepseek(self, prompt: str, max_tokens: int = 1000) -> str:
-        """Chama API OpenRouter com cache e timeout (RNF07)."""
-        logging.info(f"Chamando API OpenRouter para prompt: {prompt[:50]}...")
-        if prompt in self.cache:
-            logging.info("Resposta obtida do cache")
-            return self.cache[prompt]
-        try:
-            dados = {
-                "model": "deepseek/deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": max_tokens,
-                "temperature": 0.7,
-            }
-            response = requests.post(self.url, headers=self.headers, json=dados, timeout=10)
-            if response.status_code == 200:
-                result = response.json()
-                try:
-                    texto = result["choices"][0]["message"]["content"]
-                    self.cache[prompt] = texto
-                    logging.info("Resposta recebida da API")
-                    return texto
-                except (KeyError, IndexError):
-                    msg = f"Eita, {self.nome_aluno}, a API mandou algo errado!"
-                    print(msg)
-                    logging.error(msg)
-                    return msg
-            elif response.status_code == 401:
-                msg = f"Opa, {self.nome_aluno}, a chave da API tá inválida! Verifica no .env."
-                print(msg)
-                logging.error(f"Erro 401: {response.text}")
-                return msg
-            elif response.status_code == 429:
-                msg = f"Eita, {self.nome_aluno}, limite da API atingido! Tenta depois."
-                print(msg)
-                logging.error(msg)
-                return msg
-            else:
-                msg = f"Opa, {self.nome_aluno}, erro {response.status_code}: {response.text[:100]}..."
-                print(msg)
-                logging.error(msg)
-                return msg
-        except requests.Timeout:
-            msg = f"Eita, {self.nome_aluno}, a API demorou demais! Tenta de novo."
-            print(msg)
-            logging.error(msg)
-            return msg
-        except requests.RequestException as e:
-            msg = f"Eita, {self.nome_aluno}, erro na conexão: {str(e)}!"
-            print(msg)
-            logging.error(f"Erro na API: {str(e)}")
-            return msg
-
     def _consultar_conteudos(self, tema: str, tipo: Optional[str] = None) -> List[Dict]:
-        """Consulta conteúdos via API mock (RF19-RF21)."""
+        """Consulta conteúdos via API mock."""
         logging.info(f"Consultando conteúdos para tema: {tema}, tipo: {tipo}")
         try:
             params = {"tema": tema}
             if tipo:
                 params["tipo"] = tipo
             response = requests.get(self.content_api, params=params, timeout=2)
-            if response.status_code == 200:
-                logging.info("Conteúdos recebidos")
-                return response.json()
-            logging.warning(f"Sem conteúdos para tema: {tema}")
-            return []
+            response.raise_for_status()
+            return response.json()
         except requests.RequestException as e:
             logging.error(f"Erro ao consultar conteúdos: {str(e)}")
             return []
 
     def _salvar_progresso(self, tema: str, concluido: bool, acertos: Optional[float] = None) -> bool:
-        """Salva progresso via API mock (RF28)."""
+        """Salva progresso via API mock."""
         logging.info(f"Salvando progresso para {self.nome_aluno}, tema: {tema}")
         try:
             dados = {
@@ -191,17 +268,14 @@ class Layza:
                 "timestamp": datetime.now().isoformat(),
             }
             response = requests.post(self.progress_api, json=dados, timeout=3)
-            success = response.status_code == 200
-            logging.info(f"Progresso salvo: {success}")
-            return success
+            return response.status_code == 200
         except requests.RequestException as e:
             logging.error(f"Erro ao salvar progresso: {str(e)}")
             return False
 
     def _recomendar_conteudo(self, tema: str) -> str:
-        """Recomenda conteúdo com base em preferências (RF23-RF25)."""
+        """Recomenda conteúdo com base em preferências."""
         if not tema or tema == "assunto":
-            logging.warning("Tema inválido, usando matéria")
             tema = self.materia
         preferences = self._get_user_preferences()
         tipo_preferido = "texto"
@@ -214,16 +288,19 @@ class Layza:
         if conteudos:
             conteudo = conteudos[0]
             return f"Recomendo: {conteudo['titulo']} ({conteudo['tipo']}). Perfeito pro teu estilo de estudar!"
+        logging.warning(f"Sem conteúdos encontrados para tema: {tema}")
         return f"Não achei nada sobre {tema}. Quer saber mais sobre isso?"
 
-    def ajudar_com_pergunta(self, pergunta: str) -> Dict:
-        """Ajuda com dúvida usando perguntas reflexivas e recomendações (RF22-RF25)."""
+    def ajudar_com_pergunta(self, pergunta: str, continuar: bool = False) -> Dict:
+        """Ajuda com dúvida usando perguntas reflexivas e recomendações."""
         logging.info(f"Processando pergunta de {self.nome_aluno}: {pergunta}")
-        if not pergunta or len(pergunta.strip()) < 3:
+        pergunta = self._validar_entrada(pergunta)
+        if not pergunta:
             msg = f"Ei, {self.nome_aluno}, pergunta algo mais claro!"
             print(msg)
             logging.warning(msg)
             return {"status": "erro", "mensagem": msg}
+        
         materia_errada = self._detectar_materia(pergunta)
         if materia_errada and materia_errada != self.materia:
             msg = f"Ei, {self.nome_aluno}, isso parece {materia_errada}, não {self.materia}! Quer mudar de matéria?"
@@ -231,90 +308,103 @@ class Layza:
             logging.warning(msg)
             return {"status": "erro", "mensagem": msg}
         
+        # Tenta resposta local para matemática
+        if self.materia == "matematica":
+            resposta_local = self._resposta_local_matematica(pergunta)
+            if resposta_local:
+                print(f"\nSobre '{pergunta}': {resposta_local}\n")
+                self._salvar_progresso(self.materia, True)
+                self.historico_manager.salvar(self.nome_aluno, pergunta, "respondido localmente")
+                return {"status": "sucesso", "reflexoes": resposta_local, "feedback": "", "recomendacao": ""}
+        
         chave = self._extrair_chave(pergunta)
-        historico_str = "\n".join([f"Pergunta: {h[0]}, Resposta: {h[1]}" for h in self.historico[-2:]]) or "Sem histórico."
+        historico = self.historico_manager.carregar(self.nome_aluno)
+        historico_str = "\n".join([f"Pergunta: {p}, Resposta: {r}" for p, r in historico]) or "Sem histórico."
         preferences = self._get_user_preferences()
         pref_str = ", ".join([k for k, v in preferences.items() if v]) or "sem preferências"
         
-        exemplos_materia = {
-            "matematica": "ex.: potência em cálculos de juros, área de figuras, progressões",
-            "portugues": "ex.: análise de textos, gramática em redações, figuras de linguagem",
-            "ciencias": "ex.: reações químicas, energia, ecossistemas"
-        }
-        prompt = (
-            f"Sou a Layza, de {self.materia}, para {self.nivel_escolar}, ajudando adolescentes do ensino médio pro ENEM. "
-            f"Use o método socrático: faça 1-2 perguntas reflexivas, curtas, focadas em {self.materia}, sem respostas prontas. "
-            f"Use exemplos práticos de {self.materia} ({exemplos_materia[self.materia]}), sem mencionar outras matérias. "
-            f"Considere preferências: {pref_str}. Histórico:\n{historico_str}\nPergunta atual: '{pergunta}'. "
-            f"Foca em '{chave}'. Fala direto, como um colega explicando pro ENEM."
-        )
-        reflexoes = self._chamar_deepseek(prompt)
-        print(f"\nSobre '{pergunta}': {reflexoes}\n")
-        
-        resposta_aluno = input(f"E aí, {self.nome_aluno}, o que tu acha? ").strip()
-        if resposta_aluno.lower() == "sair":
-            logging.info(f"{self.nome_aluno} escolheu sair")
-            return {"status": "sair"}
-        
-        confusao = any(termo in resposta_aluno.lower() for termo in ["não sei", "não entendi", "confuso", "explica", "simples", "sla"])
-        prompt_analise = (
-            f"Sou a Layza, de {self.materia}, para {self.nivel_escolar}, ajudando adolescentes do ensino médio pro ENEM. "
-            f"Analisa a resposta do aluno: dá feedback curto e direto, vê se tá no caminho certo, e faz uma pergunta pra avançar. "
-            f"Se confuso, explica {self.materia} com exemplo prático ({exemplos_materia[self.materia]}), sem outras matérias. "
-            f"Pergunta: '{pergunta}'. Reflexões: '{reflexoes}'. Resposta: '{resposta_aluno}'. "
-            f"Foca em '{chave}'. Fala como um colega pro ENEM."
-        )
-        feedback = self._chamar_deepseek(prompt_analise)
-        print(f"\nValeu, {self.nome_aluno}! **Feedback:** {feedback}\n")
-        
-        if confusao:
-            esclarecer = input(f"Ei, {self.nome_aluno}, tá meio perdido? Quer uma explicação mais simples ou outra dúvida? (simples/outra/sair): ").strip().lower()
-            if esclarecer == "simples":
-                prompt_esclarecer = (
-                    f"Sou a Layza, de {self.materia}, para {self.nivel_escolar}, ajudando adolescentes do ensino médio pro ENEM. "
-                    f"O aluno tá confuso com '{pergunta}'. Explica de forma bem simples, com exemplo prático de {self.materia} "
-                    f"({exemplos_materia[self.materia]}), sem mencionar outras matérias. "
-                    f"Histórico: '{resposta_aluno}'. Foca em '{chave}'. Fala direto, como um colega pro ENEM."
-                )
-                nova_explicacao = self._chamar_deepseek(prompt_esclarecer)
-                print(f"\nBeleza, {self.nome_aluno}, vou te explicar de um jeito mais simples:\n{nova_explicacao}\n")
-                entendeu = input(f"Agora tá de boa, {self.nome_aluno}? (sim/não): ").strip().lower()
-                if entendeu != "sim":
-                    print(f"Sem estresse, {self.nome_aluno}! Quer tentar outra pergunta ou continuar nessa?")
-                    continuar = input("(outra/continuar/sair): ").strip().lower()
-                    if continuar == "outra":
-                        nova_pergunta = input("Qual tua nova dúvida? ")
-                        return self.ajudar_com_pergunta(nova_pergunta)
-                    elif continuar == "sair":
-                        return {"status": "sair"}
-            elif esclarecer == "outra":
-                nova_pergunta = input("Qual tua nova dúvida? ")
-                return self.ajudar_com_pergunta(nova_pergunta)
-            elif esclarecer == "sair":
+        # Reflexões apenas na primeira iteração ou se não for continuação
+        if not continuar:
+            prompt = self.prompt_builder.para_pergunta(pergunta, chave, historico_str, pref_str)
+            reflexoes = self.api_client.chamar(prompt)
+            print(f"\nSobre '{pergunta}': {reflexoes}\n")
+        else:
+            reflexoes = ""
+
+        while True:
+            resposta_aluno = self._validar_entrada(input(f"E aí, {self.nome_aluno}, o que tu acha? ").strip())
+            if not resposta_aluno or resposta_aluno.lower() == "sair":
+                logging.info(f"{self.nome_aluno} escolheu sair")
                 return {"status": "sair"}
-        
-        recomendacao = self._recomendar_conteudo(chave)
-        print(f"\n{recomendacao}\n")
-        
-        self._salvar_progresso(self.materia, True)
-        self.historico.append((pergunta, resposta_aluno))
-        self._salvar_historico()
-        
-        return {
-            "status": "sucesso",
-            "reflexoes": reflexoes,
-            "feedback": feedback,
-            "recomendacao": recomendacao
-        }
+            
+            confusao = any(termo in resposta_aluno.lower() for termo in ["não sei", "não entendi", "confuso", "explica", "simples", "sla"])
+            prompt_feedback = self.prompt_builder.para_feedback(pergunta, reflexoes, resposta_aluno, chave)
+            feedback = self.api_client.chamar(prompt_feedback)
+            print(f"\nValeu, {self.nome_aluno}! {feedback}\n")
+            
+            if confusao:
+                esclarecer = input(f"Ei, {self.nome_aluno}, tá meio perdido? Quer uma explicação mais simples, mais técnica, ou outra dúvida? (simples/técnica/outra/sair): ").strip().lower()
+                if esclarecer == "simples":
+                    prompt_esclarecer = self.prompt_builder.para_explicacao_simples(pergunta, resposta_aluno, chave)
+                    nova_explicacao = self.api_client.chamar(prompt_esclarecer)
+                    print(f"\nBeleza, {self.nome_aluno}, vou te explicar de um jeito mais simples:\n{nova_explicacao}\n")
+                    entendeu = input(f"Agora tá de boa, {self.nome_aluno}? (sim/não): ").strip().lower()
+                    if entendeu != "sim":
+                        print(f"Sem estresse, {self.nome_aluno}! Quer continuar nessa dúvida ou tentar outra?")
+                        continuar_opcao = input("(continuar/outra/sair): ").strip().lower()
+                        if continuar_opcao == "outra":
+                            nova_pergunta = input("Qual tua nova dúvida? ")
+                            return self.ajudar_com_pergunta(nova_pergunta)
+                        elif continuar_opcao == "sair":
+                            return {"status": "sair"}
+                        # Continuar no loop para nova resposta
+                elif esclarecer == "técnica":
+                    prompt_tecnico = self.prompt_builder.para_explicacao_tecnica(pergunta, resposta_aluno, chave)
+                    explicacao_tecnica = self.api_client.chamar(prompt_tecnico)
+                    print(f"\nBeleza, {self.nome_aluno}, aqui vai uma explicação mais técnica:\n{explicacao_tecnica}\n")
+                    entendeu = input(f"Agora tá de boa, {self.nome_aluno}? (sim/não): ").strip().lower()
+                    if entendeu != "sim":
+                        print(f"Sem estresse, {self.nome_aluno}! Quer continuar nessa dúvida ou tentar outra?")
+                        continuar_opcao = input("(continuar/outra/sair): ").strip().lower()
+                        if continuar_opcao == "outra":
+                            nova_pergunta = input("Qual tua nova dúvida? ")
+                            return self.ajudar_com_pergunta(nova_pergunta)
+                        elif continuar_opcao == "sair":
+                            return {"status": "sair"}
+                        # Continuar no loop
+                elif esclarecer == "outra":
+                    nova_pergunta = input("Qual tua nova dúvida? ")
+                    return self.ajudar_com_pergunta(nova_pergunta)
+                elif esclarecer == "sair":
+                    return {"status": "sair"}
+                # Se não escolher, continua no loop pedindo resposta
+            else:
+                recomendacao = self._recomendar_conteudo(chave)
+                print(f"\n{recomendacao}\n")
+                
+                self._salvar_progresso(self.materia, True)
+                self.historico_manager.salvar(self.nome_aluno, pergunta, resposta_aluno)
+                
+                print(f"\nBeleza, {self.nome_aluno}! Quer continuar nessa dúvida ou partir pra outra? (continuar/outra/sair): ")
+                continuar_opcao = input().strip().lower()
+                if continuar_opcao == "outra":
+                    nova_pergunta = input("Qual tua nova dúvida? ")
+                    return self.ajudar_com_pergunta(nova_pergunta)
+                elif continuar_opcao == "sair":
+                    return {"status": "sair"}
+                # Se escolher "continuar" ou inválido, volta ao loop sem novas reflexões
 
     def corrigir_prova(self, pergunta: str, resposta_aluno: str) -> Dict:
-        """Corrige prova com perguntas reflexivas (RF12, RF18)."""
+        """Corrige prova com perguntas reflexivas."""
         logging.info(f"Corrigindo prova de {self.nome_aluno}: {pergunta}")
-        if not pergunta or not resposta_aluno or len(pergunta.strip()) < 3 or len(resposta_aluno.strip()) < 3:
+        pergunta = self._validar_entrada(pergunta)
+        resposta_aluno = self._validar_entrada(resposta_aluno)
+        if not pergunta or not resposta_aluno:
             msg = f"Eita, {self.nome_aluno}, pergunta ou resposta tá muito vaga! Tenta algo mais claro."
             print(msg)
             logging.warning(msg)
             return {"status": "erro", "mensagem": msg}
+        
         materia_errada = self._detectar_materia(pergunta)
         if materia_errada and materia_errada != self.materia:
             msg = f"Ei, {self.nome_aluno}, parece {materia_errada}, não {self.materia}! Quer mudar?"
@@ -322,25 +412,20 @@ class Layza:
             logging.warning(msg)
             return {"status": "erro", "mensagem": msg}
         
-        if self.user_data["role"] != "aluno" and self.user_data["role"] != "administrador":
+        if self.user_data["role"] not in ["aluno", "administrador"]:
             msg = f"Eita, {self.nome_aluno}, só alunos ou admins corrigem provas!"
             print(msg)
             logging.warning(msg)
             return {"status": "erro", "mensagem": msg}
         
         chave = self._extrair_chave(pergunta)
-        exemplos_materia = {
-            "matematica": "ex.: potência em cálculos de juros, área de figuras, progressões",
-            "portugues": "ex.: análise de textos, gramática em redações, figuras de linguagem",
-            "ciencias": "ex.: reações químicas, energia, ecossistemas"
-        }
         prompt = (
             f"Sou a Layza, de {self.materia}, para {self.nivel_escolar}, ajudando adolescentes do ensino médio pro ENEM. "
             f"Use método socrático: analisa a resposta, aponta 1 ponto forte e 1 fraco, faz uma pergunta reflexiva pra cada, sem corrigir. "
-            f"Use exemplos práticos de {self.materia} ({exemplos_materia[self.materia]}), sem outras matérias. "
+            f"Use exemplos práticos de {self.materia} ({self.prompt_builder.exemplos[self.materia]}), sem outras matérias. "
             f"Pergunta: '{pergunta}'. Resposta: '{resposta_aluno}'. Foca em '{chave}'. Fala direto, como um colega pro ENEM."
         )
-        reflexoes = self._chamar_deepseek(prompt)
+        reflexoes = self.api_client.chamar(prompt)
         print(
             f"\nOlha tua prova, {self.nome_aluno}:\n"
             f"\nPergunta: {pergunta}\n"
@@ -348,21 +433,21 @@ class Layza:
             f"\n{reflexoes}\n"
         )
         
-        resposta_reflexao = input(f"E aí, {self.nome_aluno}, o que tu acha? ").strip()
-        if resposta_reflexao.lower() == "sair":
+        resposta_reflexao = self._validar_entrada(input(f"E aí, {self.nome_aluno}, o que tu acha? ").strip())
+        if not resposta_reflexao or resposta_reflexao.lower() == "sair":
             logging.info(f"{self.nome_aluno} escolheu sair")
             return {"status": "sair"}
         
         prompt_feedback = (
             f"Sou a Layza, de {self.materia}, para {self.nivel_escolar}, ajudando adolescentes do ensino médio pro ENEM. "
             f"Analisa a resposta às reflexões: feedback curto, vê se tá no caminho, faz pergunta simples pra continuar. "
-            f"Se confuso, dá dica prática de {self.materia} ({exemplos_materia[self.materia]}), sem outras matérias. "
+            f"Se confuso, dá dica prática de {self.materia} ({self.prompt_builder.exemplos[self.materia]}), sem outras matérias. "
             f"Pergunta: '{pergunta}'. Resposta inicial: '{resposta_aluno}'. "
             f"Reflexões: '{reflexoes}'. Resposta às reflexões: '{resposta_reflexao}'. "
             f"Foca em '{chave}'. Fala direto, como um colega pro ENEM."
         )
-        feedback = self._chamar_deepseek(prompt_feedback)
-        print(f"\nValeu, {self.nome_aluno}! **Feedback:** {feedback}\n")
+        feedback = self.api_client.chamar(prompt_feedback)
+        print(f"\nValeu, {self.nome_aluno}! {feedback}\n")
         
         nota = None
         try:
@@ -381,8 +466,7 @@ class Layza:
             print("Nota inválida, pulando avaliação.")
         
         self._salvar_progresso(self.materia, True, acertos=0.8)
-        self.historico.append((pergunta, resposta_aluno))
-        self._salvar_historico()
+        self.historico_manager.salvar(self.nome_aluno, pergunta, resposta_aluno)
         
         return {
             "status": "sucesso",
@@ -470,11 +554,8 @@ def interagir_com_layza():
                 continue
             result = layza.ajudar_com_pergunta(pergunta)
             if result.get("status") == "sair":
-                confirma = input("Tem certeza que quer sair? (sim/não): ").strip().lower()
-                if confirma == "sim":
-                    print(f"\nFalou, {nome_aluno}! Valeu por estudar comigo!\n")
-                    break
-                continue
+                print(f"\nFalou, {nome_aluno}! Valeu por estudar comigo!\n")
+                break
         elif escolha == "2":
             tentativas_invalidas = 0
             pergunta = input("\nQual foi a pergunta da prova? ").strip()
@@ -493,11 +574,8 @@ def interagir_com_layza():
                 continue
             result = layza.corrigir_prova(pergunta, resposta_aluno)
             if result.get("status") == "sair":
-                confirma = input("Tem certeza que quer sair? (sim/não): ").strip().lower()
-                if confirma == "sim":
-                    print(f"\nFalou, {nome_aluno}! Valeu por estudar comigo!\n")
-                    break
-                continue
+                print(f"\nFalou, {nome_aluno}! Valeu por estudar comigo!\n")
+                break
         else:
             tentativas_invalidas += 1
             if tentativas_invalidas >= max_tentativas:
