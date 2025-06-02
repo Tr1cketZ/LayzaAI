@@ -113,11 +113,9 @@ Este projeto está sob a licença [MIT](LICENSE).
 
 ## 👥 Autores
 
-- [Nome do Autor] - Desenvolvimento inicial
+Riverton C. - Desenvolvimento inicial
 
 ## 🙏 Agradecimentos
 
-- [Lista de agradecimentos]
 
----
 ⭐️ Desenvolvido com ❤️ pela equipe Layza Educational Platform
